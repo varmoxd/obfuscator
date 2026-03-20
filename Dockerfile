@@ -1,19 +1,19 @@
-# .NET Core 2.0 runtime (нужен для IronBrew2 CLI.dll)
-FROM mcr.microsoft.com/dotnet/runtime:2.0 AS base
+# Node.js 18 на Debian 11 (bullseye)
+# dotnet 3.1 runtime — умеет запускать netcoreapp2.0 сборки
+FROM node:18-bullseye-slim
 
-# Установить Node.js 18
-RUN apt-get update && apt-get install -y curl && \
-    curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
-    apt-get install -y nodejs && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y wget apt-transport-https && \
+    wget https://packages.microsoft.com/config/debian/11/packages-microsoft-prod.deb -O /tmp/dotnet.deb && \
+    dpkg -i /tmp/dotnet.deb && \
+    apt-get update && \
+    apt-get install -y dotnet-runtime-3.1 && \
+    apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/dotnet.deb
 
 WORKDIR /app
 
-# Скопировать зависимости и установить
 COPY package.json .
 RUN npm install --production
 
-# Скопировать сервер и IronBrew
 COPY server.js .
 COPY ironbrew/ ./ironbrew/
 
