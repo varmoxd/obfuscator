@@ -3,7 +3,8 @@ const { exec } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const os = require('os');
+const { promisify } = require('util');
+const execAsync = promisify(exec);
 
 const app = express();
 app.use(express.json({ limit: '1mb' }));
@@ -17,7 +18,14 @@ app.use((req, res, next) => {
 });
 
 const IB_DIR = path.join(__dirname, 'ironbrew');
-const DLL = path.join(IB_DIR, 'IronBrew2 CLI.dll');
+const DLL    = path.join(IB_DIR, 'IronBrew2 CLI.dll');
+
+// IronBrew читает input.txt и пишет результат в out.lua — всё в своей папке
+const IB_INPUT  = path.join(IB_DIR, 'input.txt');
+const IB_OUTPUT = path.join(IB_DIR, 'out.lua');
+
+// Мьютекс — только один запрос за раз (IronBrew пишет в фиксированные файлы)
+let busy = false;
 
 app.get('/health', (req, res) => res.json({ ok: true }));
 
@@ -26,35 +34,42 @@ app.post('/obfuscate', async (req, res) => {
     if (!code.trim()) return res.status(400).json({ error: 'No code provided' });
     if (code.length > 100000) return res.status(400).json({ error: 'Code too large (max 100KB)' });
 
-    // Write input to temp file
-    const id = crypto.randomBytes(8).toString('hex');
-    const inputFile = path.join(os.tmpdir(), `ib_in_${id}.lua`);
-    const outputFile = path.join(os.tmpdir(), `ib_out_${id}.lua`);
+    if (busy) return res.status(429).json({ error: 'Server busy, try again in a moment' });
+    busy = true;
 
     try {
-        fs.writeFileSync(inputFile, code, 'utf8');
+        // Записываем код в input.txt
+        fs.writeFileSync(IB_INPUT, code, 'utf8');
 
-        const cmd = `dotnet "${DLL}" "${inputFile}" "${outputFile}"`;
+        // Удаляем старый out.lua если есть
+        try { fs.unlinkSync(IB_OUTPUT); } catch {}
 
-        await new Promise((resolve, reject) => {
-            exec(cmd, { cwd: IB_DIR, timeout: 30000 }, (err, stdout, stderr) => {
-                if (err) return reject(new Error(stderr || err.message));
-                resolve();
-            });
+        // Запускаем IronBrew
+        const { stdout, stderr } = await execAsync(`dotnet "IronBrew2 CLI.dll" "input.txt"`, {
+            cwd: IB_DIR,
+            timeout: 30000
         });
 
-        if (!fs.existsSync(outputFile)) {
-            return res.status(500).json({ error: 'IronBrew produced no output' });
+        console.log('stdout:', stdout);
+        console.log('stderr:', stderr);
+
+        // Проверяем вывод
+        if (!fs.existsSync(IB_OUTPUT)) {
+            return res.status(500).json({ error: 'IronBrew produced no output', stdout, stderr });
         }
 
-        const result = fs.readFileSync(outputFile, 'utf8');
+        const result = fs.readFileSync(IB_OUTPUT, 'utf8').trim();
+        if (!result) {
+            return res.status(500).json({ error: 'IronBrew output is empty', stdout, stderr });
+        }
+
         return res.json({ success: true, result, size: result.length });
 
     } catch (e) {
+        console.error('Error:', e.message);
         return res.status(500).json({ error: 'Obfuscation failed: ' + e.message });
     } finally {
-        try { fs.unlinkSync(inputFile); } catch {}
-        try { fs.unlinkSync(outputFile); } catch {}
+        busy = false;
     }
 });
 
