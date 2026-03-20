@@ -16,9 +16,11 @@ RUN npm install --production
 COPY server.js .
 COPY ironbrew/ ./ironbrew/
 
-# IronBrew вызывает .\luajit.exe — создаём shell-обёртку с тем же именем
-RUN printf '#!/bin/sh\nexec luajit "$@"\n' > /app/ironbrew/luajit.exe && \
-    chmod +x /app/ironbrew/luajit.exe
+# IronBrew строит путь: директория_input + "\\luajit.exe" (буквально с backslash)
+# На Linux это создаёт путь вроде /app/ironbrew\luajit.exe
+# Создаём файл с backslash в имени как wrapper на нативный luajit
+RUN printf '#!/bin/sh\nexec luajit "$@"\n' > '/app/ironbrew/\luajit.exe' && \
+    chmod +x '/app/ironbrew/\luajit.exe'
 
 EXPOSE 3000
 
